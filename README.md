@@ -25,7 +25,7 @@
      * [Trade-offs of Each Strategy](#trade-offs-of-each-strategy)
      * [Takeaways](#takeaways)
 8. [Errors & Fixes](#8-errors--fixes)
-9. [Addational](#9-log-history)
+9. [AWS-Screenhots](#9-log-history)
 10. [References](#10-references)
 
 ---
@@ -246,18 +246,53 @@ flowchart LR
 
 ## 8. Errors & Fixes
 
-| Issue | Observation | Resolution / status |
-|-------|-------------|---------------------|
-| Severe environment health | Load-balancer health checks failing or unavailable; instances not reporting health data | An instance had **no public IPv4 address**. Troubleshooting covered public-IP configuration, Internet Gateway routing, subnet associations, and target health. `krakow-lab` later became healthy with version 1. The exact change that resolved each symptom was not recorded. |
-| Pipeline not triggering | A code change initially did not start the pipeline | Root cause not recorded. Pipeline later confirmed working. |
-| Broken pipeline execution | Another change broke a pipeline run | Root cause not recorded. |
-| Immutable instances terminated | New instances were later terminated | Unresolved. Check Elastic Beanstalk Events and Auto Scaling activity history. |
+
 
 ---
 
-## 9 Additional
+## 9 AWS-Screenhots
+
+
+> How did the app look like?
+
+<img width="2940" height="1844" alt="Pasted Graphic 13" src="https://github.com/user-attachments/assets/39aa6270-0c9b-425c-9d44-a43a71a19c68" />
+<img width="2940" height="1844" alt="Pasted Graphic 1" src="https://github.com/user-attachments/assets/e82d5e1f-4b62-4f30-862c-a39545459c5b" />
+
+--- 
+
+> Manual deployment of Python application
+
+<img width="2938" height="506" alt="Pasted Graphic" src="https://github.com/user-attachments/assets/647116e9-2fb5-409e-87d6-a34d2e398a37" />
 
 ---
+
+> Green Pipeline Deployment to EB
+<img width="1878" height="322" alt="@Source" src="https://github.com/user-attachments/assets/c74a09ac-6e76-4dcf-8766-09e1ec4811cf" />
+
+---
+
+> Checking Heath, Request, Versions, instances
+
+<img width="2940" height="350" alt="Pasted Graphic 3" src="https://github.com/user-attachments/assets/e482e447-c51f-47ca-af9a-2885010892d2" />
+
+
+<img width="2936" height="354" alt="Pasted Graphic 2" src="https://github.com/user-attachments/assets/4a9f2a29-6a43-46bc-839a-b9d84e0776f1" />
+
+---
+
+> EB requires permissions across AWS services and Resources
+<img width="2826" height="1364" alt="Euceties summary" src="https://github.com/user-attachments/assets/1481342a-e6df-4dd4-864e-46a86e61116a" />
+
+---
+
+> Observing the changes from Rolling with batches -> Immutable, how instances changes
+
+<img width="1406" height="482" alt="Review changes" src="https://github.com/user-attachments/assets/8a3e16f3-75ec-44e4-a055-4f1aefe02654" />
+<img width="2498" height="272" alt="Pasted Graphic 16" src="https://github.com/user-attachments/assets/a5ffd10a-7404-484f-b578-f059830fed4f" />
+<img width="2510" height="308" alt="Pasted Graphic 17" src="https://github.com/user-attachments/assets/b95cd62b-7a9c-4729-b169-69235377c84e" />
+<img width="2490" height="202" alt="Pasted Graphic 18" src="https://github.com/user-attachments/assets/e32b03e6-3907-4853-bd48-3f3e3fe8edae" />
+
+
 
 ## 10. References
 
