@@ -1,183 +1,284 @@
-# Krakow Python: Elastic Beanstalk learning project
+# AWS Elastic Beanstalk Deployment & CI/CD Automation
 
-## Included
-- v1: teal background. v2: orange background. Both show the same cartoon panorama and three cropped detail views, with NO visible homepage text.
-- No database, external APIs, JavaScript, fonts or image generation at runtime.
-- Python standard-library WSGI app; Gunicorn is the only runtime dependency. One worker, two threads.
-- /health returns HTTP 200 with JSON. /version and X-App-Version identify the release. X-App-Instance is an opaque per-instance marker. These diagnostics contain text, unlike the homepage.
-- Source, eight unit tests, buildspec.yml and tools/probe.py are in both ZIPs.
-- Artwork generated with Microsoft Copilot. It is a stylized interpretation, not an architecturally exact representation.
-- Locally tested, not deployed or tested in your AWS account. No cloud resources have been created.
+**Python app · Manual v1 deployment · CodeCommit + EventBridge + CodePipeline · Deployment strategies**
 
-## 1. Cost controls FIRST
-The small app does not make AWS infrastructure free. Elastic Beanstalk has no additional service charge; you pay for its resources. [1]
-- Create a small cost budget with email alerts. Alerts are NOT a hard spending cap and billing data can be delayed. [9]
-- Use Standard / EC2-based Elastic Beanstalk, not EKS/Cluster mode, for this lab. [10]
-- Suggested starting instance: t3.micro, x86_64, On-Demand. This is a recommendation, not a measured AWS memory guarantee. Choose a compatible small instance available in your Region.
-- No RDS, Redis, NAT Gateway, custom domain or SSH key is needed by this app.
-- For a temporary public lab, use public subnets, an internet gateway and public IPv4 on instances so package downloads work without NAT. This is not a private production design. Public IPv4, disks, traffic and logs can still cost money. Never store secrets or personal data in this demo.
-- Leave detailed monitoring, tracing and persistent log streaming off unless intentionally testing them. Enable enhanced environment health.
-- Terminate environments after your session. Stopping EC2 instances is not a substitute: Auto Scaling can replace them.
-- Check regional EC2, EBS, public IPv4, ALB, S3, CodeBuild and CodePipeline rates. Do not assume Free Tier or credits apply. [1]
+> Author: Hussein Al-Attas
 
-## 2. First deployment: MANUAL
-For the cheapest first check, use a single-instance environment. If ready to test all policies immediately, skip this single-instance stage and manually deploy into the load-balanced environment in section 3 instead.
+---
 
-1. Elastic Beanstalk > Create application / Create environment.
-2. Application: krakow-python. Environment: krakow-manual. Web server environment, Standard/EC2 mode if offered.
-3. Platform: Python on a currently supported Amazon Linux 2023 branch. Select a supported Python 3 version, for example 3.12 if offered.
-4. Upload your code: select krakow-v1.zip UNCHANGED. Version label: krakow-v1.
-5. Environment type: Single instance. Suggested instance: t3.micro, On-Demand.
-6. Service access: select/create BOTH the Elastic Beanstalk service role and EC2 instance profile. They are different roles. Follow the wizard's IAM guidance if missing; do not grant AdministratorAccess as a workaround. [8]
-7. Networking: VPC with a public instance subnet, public IPv4 enabled, no database. Permit required HTTP for the public demo; no SSH is needed.
-8. Review resources, submit and wait for Ready/healthy.
-9. Open the environment URL: artwork and teal background, no visible text.
-10. Open URL/health: expect HTTP 200 and status ok. Open URL/version: expect v1.
-11. Choose Upload and deploy > krakow-v2.zip > version label krakow-v2. Refresh: orange background. Manual upload/redeploy instructions: [2].
+## Table of Contents
 
-ZIP files already have application.py, requirements.txt and Procfile at their ROOT. Do not wrap them in another ZIP or add a parent folder. [4]
+1. [Project Overview](#1-project-overview)
+2. [Architecture Diagram](#2-architecture-diagram)
+   * [Delivery Workflow](#delivery-workflow)
+   * [Application Hosting](#application-hosting)
+3. [Technology Stack](#3-technology-stack)
+4. [Prerequisites & Initial Configuration](#4-prerequisites--initial-configuration)
+5. [Manual Deployment Using Elastic Beanstalk](#5-manual-deployment-using-elastic-beanstalk)
+6. [Automating Elastic Beanstalk with AWS CI/CD](#6-automating-elastic-beanstalk-with-aws-cicd)
+7. [Deployment Strategies & Testing](#7-deployment-strategies--testing)
+   * [7.1 Deployment Strategy Journey: All at Once to Traffic Splitting](#71-deployment-strategy-journey-all-at-once-to-traffic-splitting)
+     * [The Journey in One View](#the-journey-in-one-view)
+     * [Step by Step](#step-by-step)
+     * [What Changed at Each Step](#what-changed-at-each-step)
+     * [Key Observations from the Logs](#key-observations-from-the-logs)
+     * [Trade-offs of Each Strategy](#trade-offs-of-each-strategy)
+     * [Takeaways](#takeaways)
+   * [7.2 Deployment Strategy Comparison](#72-deployment-strategy-comparison)
+8. [Errors & Fixes](#8-errors--fixes)
+9. [Log History](#9-log-history)
+10. [References](#10-references)
 
-Optional local preview after extracting either ZIP into an empty directory:
-```bash
-python application.py
-```
-Open http://127.0.0.1:8000. No package installation is required for this standard-library preview. AWS uses Gunicorn from Procfile, on port 8000. [5]
+---
 
-## 3. Environment for ALL deployment policies
-There are FIVE policies: All at once, Rolling, Rolling with additional batch, Immutable and Traffic splitting. Blue/green is a separate two-environment workflow, not a sixth dropdown policy. Rolling policies require load balancing; traffic splitting specifically requires an Application Load Balancer. Immutable also works with single-instance environments. [2][3]
+## 1. Project Overview
 
-Create a fresh environment under the SAME application for a clear setup:
-- Name: krakow-strategies; same Python platform and instance type.
-- Deploy existing krakow-v1, or upload the v1 ZIP.
-- Environment type: Load balanced.
-- Load balancer: dedicated Application Load Balancer (ALB). Choose this during creation: its type cannot be changed in place later. [6]
-- Public ALB subnets in TWO Availability Zones.
-- Public instance subnets with public IPv4, internet access, no NAT for this temporary lab.
-- Auto Scaling minimum 2, maximum 2. This holds a two-instance baseline for clear rolling observations; it does NOT test demand-based autoscaling.
-- HTTP listener 80. Keep default backend process on HTTP port 80, which reaches the instance proxy. Gunicorn stays on 8000 behind that proxy. Do NOT change the default process port to 8000. [5][6]
-- Load balancer settings > Processes > default > health check path /health; success code 200. ALB health checks use the PROCESS path, not a separate generic application health URL. [6]
-- No session stickiness. Enhanced health enabled. Ignore health check disabled.
-- Public HTTP to ALB; instance HTTP allowed from ALB security group rather than the whole internet. No SSH needed.
+Deploy a Python web application showcasing cartoon-style images of Kraków using AWS Elastic Beanstalk, progressing from manual deployment to CI/CD automation.
+Test different deployment strategies using visibly distinct application versions (V1 and V2) to simulate production releases and evaluate their impact on application availability, deployment time, and infrastructure capacity.
 
-Wait for BOTH instances and ALB targets to become healthy. Check /health and /version. Then terminate krakow-manual if created. The overlap temporarily bills both environments.
+**Objectives**
 
-## 4. Test all five policies
-For EACH experiment:
-1. Start with a healthy v1 or v2 baseline.
-2. Select the policy; apply and wait for the configuration update to finish.
-3. Start the observer in another terminal.
-4. Upload and deploy the OTHER version.
-5. Watch Events, Health, EC2 instance counts and ALB target groups.
-6. Record results; wait for Ready/healthy and temporary-instance cleanup before the next experiment.
+* Understand the distinction between an application, application version, and environment.
+* Deploy a Python application manually before automating delivery.
+* Connect source-code changes to an automated deployment pipeline.
+* Compare deployment strategies through browser behavior and infrastructure changes.
+* Troubleshoot networking, health, triggers, and release visibility.
 
-From the extracted source directory:
-```bash
-python tools/probe.py http://YOUR-ENVIRONMENT-URL --count 600
-```
-This observes YOUR lab at at most one small request per second, up to 600 requests. It is not a stress test and is not intended to trigger autoscaling. Restart it if the deployment takes longer. Output: UTC time, status, release, opaque instance marker and latency. It does not retain cookies. Small samples will not exactly match canary percentages; brief interruptions can be missed by one-second sampling.
+**Release identification**
 
-Console policy location documented by AWS: environment > Configuration > Rolling updates and deployments / Updates and deployments > Application deployments > Deployment policy. Change the APPLICATION deployment policy, not the separate rolling configuration-update policy. Apply and wait for Ready. [3]
+Background color makes each release easy to tell apart in the browser:
 
-If the console groups settings differently, use CLI/CloudShell rather than guessing. Set your values:
-```bash
-export AWS_DEFAULT_REGION=YOUR_REGION
-export ENV=krakow-strategies
-```
-Run ONE policy command, wait for Ready, THEN upload/deploy the other release:
+| Release | Visual identifier |
+|---------|-------------------|
+| V1      | Teal              |
+| V2      | Orange            |
 
-### All at once
-```bash
-aws elasticbeanstalk update-environment --environment-name "$ENV" --option-settings Namespace=aws:elasticbeanstalk:command,OptionName=DeploymentPolicy,Value=AllAtOnce
-```
-Both instances update; temporary unavailability is possible. Planned baseline count: 2. [3]
+Release settings are controlled through a `release.json` file, so releases can change without repeatedly editing the main application:
 
-### Rolling, batch 1
-```bash
-aws elasticbeanstalk update-environment --environment-name "$ENV" --option-settings Namespace=aws:elasticbeanstalk:command,OptionName=DeploymentPolicy,Value=Rolling Namespace=aws:elasticbeanstalk:command,OptionName=BatchSizeType,Value=Fixed Namespace=aws:elasticbeanstalk:command,OptionName=BatchSize,Value=1
-```
-One instance updates while the other serves. Old/new versions can overlap. Planned count: 2. [3]
-
-### Rolling with additional batch, batch 1
-```bash
-aws elasticbeanstalk update-environment --environment-name "$ENV" --option-settings Namespace=aws:elasticbeanstalk:command,OptionName=DeploymentPolicy,Value=RollingWithAdditionalBatch Namespace=aws:elasticbeanstalk:command,OptionName=BatchSizeType,Value=Fixed Namespace=aws:elasticbeanstalk:command,OptionName=BatchSize,Value=1
-```
-Extra instance launches before batches update. Planned temporary count: about 3. [3]
-
-### Immutable
-```bash
-aws elasticbeanstalk update-environment --environment-name "$ENV" --option-settings Namespace=aws:elasticbeanstalk:command,OptionName=DeploymentPolicy,Value=Immutable
-```
-New group launches; old instances remain until health checks pass. Planned temporary count: up to about 4. [3]
-
-### Traffic splitting: 10% canary, 3-minute evaluation
-```bash
-aws elasticbeanstalk update-environment --environment-name "$ENV" --option-settings Namespace=aws:elasticbeanstalk:command,OptionName=DeploymentPolicy,Value=TrafficSplitting Namespace=aws:elasticbeanstalk:trafficsplitting,OptionName=NewVersionPercent,Value=10 Namespace=aws:elasticbeanstalk:trafficsplitting,OptionName=EvaluationTime,Value=3
-```
-New group launches; roughly 10% of traffic goes to the new version during evaluation, then all traffic if healthy. Planned temporary count: about 4. [3]
-
-IMPORTANT: These commands configure the policy; they do not themselves deploy a new application version. No policy .ebextensions file is bundled, so the source does not force a policy on every deployment.
-
-Counts above are simplified planning examples, NOT measured results or hard caps. Failures/replacement activity can change them. Auto Scaling max 2 does NOT cap total temporary instances across deployment groups. Account quotas must permit extra capacity. [3]
-
-Record: policy, old/new version, start/end time, HTTP errors, mixed-version responses, peak instance count and final health.
-
-### Manual rollback
-Applications > krakow-python > Application versions > select known-good krakow-v1 > Actions > Deploy > select environment. [2]
-
-This lab tests successful deployments and manual rollback. It does NOT prove automatic failure rollback. No intentionally broken ZIP is included. Study failure injection later in an isolated disposable environment, with Ignore health check off. Rolling failures and immutable/traffic-splitting failures have different recovery behavior. [2][3]
-
-## 5. Blue/green separately
-1. Keep the existing environment as blue.
-2. Create a second compatible environment as green with the other version.
-3. For a cheaper separate exercise, use TWO single-instance environments instead of two load-balanced environments. Terminate the strategies environment first if no longer needed; do not accidentally keep all environments running.
-4. Test green's own URL and /health.
-5. Environment overview > Actions > Swap environment URLs > select the other environment > confirm.
-6. Verify the original public URL now returns the new version. Roll back by swapping again if needed.
-7. Wait for DNS caches to expire and traffic to move BEFORE terminating the old environment. A CNAME swap is not instantaneous for every client. [7]
-
-Blue/green temporarily bills both environments. It is not a deployment-policy dropdown choice. [2][7]
-
-## 6. THEN create GitHub/CodeCommit pipeline
-Extract v1 into an empty directory. Commit the EXTRACTED FILES, not the ZIP and not an enclosing folder. application.py, release.json, requirements.txt, Procfile and buildspec.yml belong at repository root. [4]
-
-### Cheapest simple automation
-GitHub/CodeCommit source -> CodePipeline -> Elastic Beanstalk deploy.
-Skip CodeBuild. Use the source ZIP artifact as deploy input. This automates deployment but does not run the bundled tests. Elastic Beanstalk installs requirements itself. [5][11]
-
-### Learning pipeline with tests
-GitHub/CodeCommit source -> CodeBuild tests/package -> Elastic Beanstalk deploy.
-1. Create a custom pipeline; use one execution at a time, not parallel deployments to the same environment.
-2. Source: GitHub via GitHub App/CodeConnections, authorize repository and select main. Use default ZIP artifact format, not Full clone for direct deployment. Or choose AWS CodeCommit with your repository/branch if available in your account. GitHub setup: [12].
-3. Add CodeBuild in the pipeline build stage. Create the build project FROM WITHIN the pipeline flow so the pipeline supplies source. Do not select GitHub again as an independent build-project source.
-4. Managed Linux build image with supported Python 3, small supported compute, no privileged mode and no VPC attachment. Use repository buildspec.yml. It installs requirements, runs eight tests and emits only deployable files.
-5. Deploy provider: AWS Elastic Beanstalk. Select krakow-python and your CURRENT environment. Input: BuildArtifact (or your build output name), not SourceArtifact. [11]
-6. Roles need scoped source/connection, S3 artifacts, logs and deployment permissions. Never put AWS keys in source or grant administrator access just to bypass a denial.
-7. Commit/push; wait for Source, Build and Deploy to succeed. Check /version.
-8. Edit release.json to the following, commit/push and observe orange background:
 ```json
-{"version":"v2","theme":"orange","health_ok":true}
+{
+  "version": "v1",
+  "theme": "teal",
+  "health_ok": true
+}
 ```
-9. For policy tests through CI/CD, change the environment policy FIRST, wait for Ready, then push the next release. The pipeline transports the artifact; Beanstalk applies the policy. [3][11]
 
-The native Beanstalk deploy action targets ONE named environment. It does not automatically create green or swap URLs. Keep blue/green manual in this lab. [7][11]
+> **Release vs. deployment policy:** the release determines the application's color and version. The deployment policy determines *how* that release reaches the instances. Changing the policy alone does not change the application's appearance.
 
-## 7. Cleanup EVERY session
-- Wait for deployment completion or abort safely.
-- Terminate ALL lab environments, including manual and blue/green. Verify deletion completes.
-- Verify related lab EC2 instances, Auto Scaling groups, ALBs, target groups, disks and public/Elastic IP resources are gone. Never delete shared resources used elsewhere.
-- Remove lab pipeline/build project when finished. Review retained application versions, S3 artifacts and CloudWatch logs; delete only unneeded lab data after checking it is not shared.
-- Check Billing/Cost Explorer again after data updates. Retained storage/logs can still cost money. [1][9]
+---
 
-## Official AWS sources
-[1] https://aws.amazon.com/elasticbeanstalk/pricing/
-[2] https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/using-features.deploy-existing-version.html
-[3] https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/using-features.rolling-version-deploy.html
-[4] https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/applications-sourcebundle.html
-[5] https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/python-configuration-procfile.html
-[6] https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/environments-cfg-alb.html
-[7] https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/using-features.CNAMESwap.html
-[8] https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/concepts-roles.html
-[9] https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html
-[10] https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/Welcome.html
-[11] https://docs.aws.amazon.com/codepipeline/latest/userguide/action-reference-Beanstalk.html
-[12] https://docs.aws.amazon.com/codepipeline/latest/userguide/connections-github.html
+## 2. Architecture Diagram
+
+
+*Figure 1.*
+
+<img width="1536" height="1024" alt="Designer (16)" src="https://github.com/user-attachments/assets/51df1dbb-2122-47db-aa1a-14880c9a9b4c" />
+
+
+---
+
+*Figure 2.*
+
+<img width="1536" height="1024" alt="Designer (18)" src="https://github.com/user-attachments/assets/60c20cb1-0a4b-4df3-9830-623d70df685d" />
+
+
+### Delivery Workflow
+
+```mermaid
+flowchart LR
+    A[Commit change] --> B[AWS CodeCommit]
+    B --> C[Amazon EventBridge]
+    C --> D[AWS CodePipeline]
+    D --> E[AWS CodeBuild]
+    E --> F[Elastic Beanstalk deploy<br/>krakow-lab]
+    D -.-> S[(S3 artifacts)]
+    E -.-> S
+```
+
+The source-control service is **AWS CodeCommit** (not GitHub). A repository/branch change event captured by **Amazon EventBridge** starts CodePipeline, which retrieves the revision, invokes CodeBuild, and deploys the resulting artifact to `krakow-lab`. EventBridge is AWS's recommended event-based change-detection method for a CodeCommit source.
+
+### Application Hosting
+
+```mermaid
+flowchart LR
+    U[Browser] --> ALB[Public Application Load Balancer]
+    subgraph VPC["VPC 10.0.0.0/24 - public subnets, 2 AZs"]
+        subgraph ASG["krakow-lab Auto Scaling group"]
+            I1[EC2 instance<br/>Python app]
+            I2[EC2 instance<br/>Python app]
+        end
+    end
+    ALB --> I1
+    ALB --> I2
+```
+
+Browser requests reach a public Application Load Balancer, which routes them to healthy Python application instances. Elastic Beanstalk manages provisioning, load balancing, scaling, and health monitoring.
+
+---
+
+## 3. Technology Stack
+
+| Layer | Technology |
+|-------|------------|
+| Application | Python web app |
+| Hosting platform | AWS Elastic Beanstalk (`krakow-lab`) |
+| Compute | Amazon EC2 in an Auto Scaling group |
+| Load balancing | Public Application Load Balancer |
+| Networking | VPC `10.0.0.0/24`, Internet Gateway, public subnets across two Availability Zones |
+| Source control | AWS CodeCommit |
+| Pipeline trigger | Amazon EventBridge |
+| Orchestration | AWS CodePipeline |
+| Build | AWS CodeBuild |
+| Artifact storage | Amazon S3 |
+
+---
+
+## 4. Prerequisites & Initial Configuration
+
+The lab used a public-network design:
+
+* VPC address range `10.0.0.0/24`
+* Internet Gateway
+* Public subnets across two Availability Zones
+* Public Application Load Balancer
+* Public IPv4 connectivity for application instances
+
+**Monitoring and validation points used throughout the lab**
+
+| Observation point | Purpose |
+|-------------------|---------|
+| Browser background color | Identify the release serving a request |
+| `/version` response | Check the reported application version |
+| Pipeline execution | Confirm source, build, and deployment progress |
+| Elastic Beanstalk Events | Follow deployment actions and failures |
+| Environment and target health | Check whether instances were ready to serve traffic |
+| EC2 instance list | Observe temporary capacity and instance replacement |
+| Auto Scaling activity history | Investigate instance launches and terminations |
+
+
+---
+
+## 5. Manual Deployment Using Elastic Beanstalk
+
+1. Deploy **V1 (teal)** manually to `krakow-lab`.
+2. Troubleshoot initial health problems (see [Errors & Fixes](#8-errors--fixes)) until the environment reports healthy with version 1.
+3. Manually deploy **V2 (orange)** using the **Rolling** deployment policy.
+
+---
+
+## 6. Automating Elastic Beanstalk with AWS CI/CD
+
+The automated pipeline consists of:
+
+1. **Source:** retrieves the revision from CodeCommit (triggered by EventBridge).
+2. **Build:** CodeBuild builds the application and creates an artifact.
+3. **Deploy:** deploys the artifact to the existing Elastic Beanstalk environment `krakow-lab`.
+
+All three pipeline stages (Source, Build, Deploy) were confirmed green.
+
+**Workflow for each strategy test**
+
+1. Change the environment's deployment policy.
+2. Wait for the configuration update to finish.
+3. Commit the next release.
+
+---
+
+## 7. Deployment Strategies & Testing
+
+> The goal was to test different deployment strategies by releasing new application versions, observing pipeline triggers and application updates, and seeing how AWS automatically launches and terminates EC2 instances throughout the process. This helped me understand how deployments work and how AWS maintains application availability.
+
+### 7.1 Deployment Strategy Journey: All at Once to Traffic Splitting
+
+Environment `Krakow-lab` on AWS Elastic Beanstalk (eu-central-1, 2 instances). All steps were done on October 29, 2026, between 12:37 and 16:39.
+
+#### The Journey in One View
+
+```mermaid
+flowchart LR
+    A["1. All at once<br/>12:37"] --> B["2. Rolling<br/>13:00 to 15:01"]
+    B --> C["3. Immutable<br/>15:30 to 16:16"]
+    C --> D["4. Traffic splitting<br/>16:28 to 16:39"]
+```
+
+#### Step by Step
+
+| Step | Strategy | Time | Result | What happened |
+| --- | --- | --- | --- | --- |
+| 1 | All at once (Manual v1) | 12:37 to 12:40 | Succeeded | First state of the application. The strategy was not changed. In-place deployment on all instances at once. |
+| 2 | Rolling | 13:00 to 15:01 | Succeeded (3 runs) | Deployed in 2 batches of 1 instance, so one instance kept serving traffic. About 5 to 6 minutes per run. One run at 14:25 failed because the CodePipeline role was missing `cloudformation:GetTemplate`. |
+| 3 | Immutable | 15:30 to 16:16 | 4 failed, then 2 succeeded | The first 4 attempts failed with a 403 on the launch template when creating the temporary Auto Scaling group. Later runs succeeded: new instances were built beside the old ones, then swapped in. About 14 to 15 minutes per run. |
+| 4 | Traffic splitting | 16:28 to 16:39 | Succeeded | 10% of traffic went to the new version for a 5 minute evaluation, then 100%. About 11 minutes. |
+
+#### What Changed at Each Step
+
+1. **All at once to Rolling:** from updating every instance together to updating one at a time, so the application stays available during a deployment.
+2. **Rolling to Immutable:** from updating instances in place to launching new instances and replacing the old ones only after the new ones are healthy. Slower, but safer.
+3. **Immutable to Traffic splitting:** the same new-instances approach, plus a controlled 10% traffic test before the full switch.
+
+#### Key Observations from the Logs
+
+- **Both failures were permission errors, not application errors.** At 14:25 the CodePipeline role was not allowed to run `cloudformation:GetTemplate`. At 15:30 to 15:42 the Auto Scaling service returned 403 AccessDenied on the launch template. Nothing in the logs points to a problem with the application itself.
+- **Failed immutable runs were safe.** Each one stopped while creating the temporary Auto Scaling group, terminated the new resources, and left the running version untouched.
+- **Retrying did not help.** Each of the 4 failed attempts created a new launch template (a different `lt-` ID each time) and hit the same 403. The log does not say what changed before the 15:47 run succeeded.
+- **The environment was ready for advanced strategies from the start.** The creation step already built an Application Load Balancer with a listener and target group, an Auto Scaling group with scale-up and scale-down policies, two CloudWatch alarms, and two security groups. Traffic splitting needs an Application Load Balancer, so no infrastructure change was needed to use it.
+- **Instance counts per strategy.** Rolling updated 1 of 2 instances at a time. Immutable launched 1 test instance, then the rest (2 new instances in total). Traffic splitting launched 2 test instances.
+- **Overall time.** From environment creation to the last successful deployment took about 4 hours, including the failed attempts.
+
+#### Trade-offs of Each Strategy
+
+| | All at once | Rolling | Immutable | Traffic splitting |
+| --- | --- | --- | --- | --- |
+| Deploys to | All instances in place | Batches in place | New instances | New instances |
+| Traffic test first | No | No | No | Yes, 10% for 5 min |
+| Observed time | about 3 min | about 5 to 6 min | about 14 to 15 min | about 11 min |
+| Downtime risk | Highest: all instances update together | Lower: other instance keeps serving, but capacity drops during a batch | Lowest: old instances serve until new ones are healthy | Lowest: and real traffic validates the new version |
+| Rollback | Redeploy the previous version | Redeploy the previous version | Terminate the new instances, old ones are untouched | Traffic can stay on the old version if the evaluation fails |
+| Extra cost while deploying | None | None | Temporary extra instances | Temporary extra instances |
+| Good fit | Development and test | Production with some tolerance for reduced capacity | Production where safety matters more than speed | Production where you want to test with real traffic first |
+
+#### Takeaways
+
+1. Each step traded speed for safety: about 3 minutes with All at once, up to about 14 to 15 minutes with Immutable.
+2. Check the permissions of the role that runs the deployment before changing strategy. Immutable and Traffic splitting create new launch templates and Auto Scaling groups, and they need extra permissions that All at once and Rolling did not.
+3. Traffic splitting gave the most control, with a 10% test for 5 minutes, and it finished faster than Immutable.
+
+Full logs: `deployment-history.md`. Per-strategy flow diagrams: `deployment-strategies-summary.md`.
+
+### 7.2 Deployment Strategy Comparison
+
+| Strategy | How it works | Availability / capacity trade-off | Lab status |
+|----------|--------------|-----------------------------------|------------|
+| All at once | Updates all instances together | Downtime expected during the update | Reviewed |
+| Rolling | Updates existing instances in batches | Serving capacity reduced while a batch updates | Tested (batch size 1) |
+| Rolling with additional batch | Adds a batch before updating the existing fleet | Preserves capacity using temporary extra instances | Tested |
+| Immutable | Launches a replacement fleet alongside the original | Needs temporary extra capacity and health-check time | Tested |
+| Traffic splitting | Sends a percentage of traffic to a new fleet | Enables canary testing before full cutover | To be confirmed |
+
+"No downtime expected" depends on sufficient healthy capacity and a successful deployment. Deployment-related instance increases do not by themselves prove that load-driven Auto Scaling was tested.
+
+---
+
+## 8. Errors & Fixes
+
+| Issue | Observation | Resolution / status |
+|-------|-------------|---------------------|
+| Severe environment health | Load-balancer health checks failing or unavailable; instances not reporting health data | An instance had **no public IPv4 address**. Troubleshooting covered public-IP configuration, Internet Gateway routing, subnet associations, and target health. `krakow-lab` later became healthy with version 1. The exact change that resolved each symptom was not recorded. |
+| Pipeline not triggering | A code change initially did not start the pipeline | Root cause not recorded. Pipeline later confirmed working. |
+| Broken pipeline execution | Another change broke a pipeline run | Root cause not recorded. |
+| Immutable instances terminated | New instances were later terminated | Unresolved. Check Elastic Beanstalk Events and Auto Scaling activity history. |
+
+---
+
+## 9. Log History
+
+---
+
+## 10. References
+
+1. [AWS Elastic Beanstalk documentation](https://docs.aws.amazon.com/elastic-beanstalk/)
+2. [AWS CodePipeline: migrate polling pipelines to event-based change detection](https://docs.aws.amazon.com/codepipeline/latest/userguide/update-change-detection.html)
+3. [AWS Elastic Beanstalk: deployment policies and settings](https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/using-features.rolling-version-deploy.html)
+4. [AWS Elastic Beanstalk: service overview and pricing model](https://aws.amazon.com/elasticbeanstalk/)
+
+> Lab-specific statements are based on the lab report and confirmations of successful manual deployment, green pipeline stages, and strategy observations. They are not a live audit of the AWS account.
