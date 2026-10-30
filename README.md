@@ -25,7 +25,7 @@
      * [Trade-offs of Each Strategy](#trade-offs-of-each-strategy)
      * [Takeaways](#takeaways)
 8. [Errors & Fixes](#8-errors--fixes)
-9. [AI-Generated Diagram](#9-log-history)
+9. [Addational](#9-log-history)
 10. [References](#10-references)
 
 ---
@@ -255,7 +255,7 @@ flowchart LR
 
 ---
 
-## 9 AI-Generated Diagram
+## 9 Additional
 
 ---
 
