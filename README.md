@@ -24,9 +24,8 @@
      * [Key Observations from the Logs](#key-observations-from-the-logs)
      * [Trade-offs of Each Strategy](#trade-offs-of-each-strategy)
      * [Takeaways](#takeaways)
-   * [7.2 Deployment Strategy Comparison](#72-deployment-strategy-comparison)
 8. [Errors & Fixes](#8-errors--fixes)
-9. [Log History](#9-log-history)
+9. [AI-Generated Diagram](#9-log-history)
 10. [References](#10-references)
 
 ---
@@ -243,20 +242,6 @@ flowchart LR
 2. Check the permissions of the role that runs the deployment before changing strategy. Immutable and Traffic splitting create new launch templates and Auto Scaling groups, and they need extra permissions that All at once and Rolling did not.
 3. Traffic splitting gave the most control, with a 10% test for 5 minutes, and it finished faster than Immutable.
 
-Full logs: `deployment-history.md`. Per-strategy flow diagrams: `deployment-strategies-summary.md`.
-
-### 7.2 Deployment Strategy Comparison
-
-| Strategy | How it works | Availability / capacity trade-off | Lab status |
-|----------|--------------|-----------------------------------|------------|
-| All at once | Updates all instances together | Downtime expected during the update | Reviewed |
-| Rolling | Updates existing instances in batches | Serving capacity reduced while a batch updates | Tested (batch size 1) |
-| Rolling with additional batch | Adds a batch before updating the existing fleet | Preserves capacity using temporary extra instances | Tested |
-| Immutable | Launches a replacement fleet alongside the original | Needs temporary extra capacity and health-check time | Tested |
-| Traffic splitting | Sends a percentage of traffic to a new fleet | Enables canary testing before full cutover | To be confirmed |
-
-"No downtime expected" depends on sufficient healthy capacity and a successful deployment. Deployment-related instance increases do not by themselves prove that load-driven Auto Scaling was tested.
-
 ---
 
 ## 8. Errors & Fixes
@@ -270,7 +255,7 @@ Full logs: `deployment-history.md`. Per-strategy flow diagrams: `deployment-stra
 
 ---
 
-## 9. Log History
+## 9 AI-Generated Diagram
 
 ---
 
@@ -280,5 +265,3 @@ Full logs: `deployment-history.md`. Per-strategy flow diagrams: `deployment-stra
 2. [AWS CodePipeline: migrate polling pipelines to event-based change detection](https://docs.aws.amazon.com/codepipeline/latest/userguide/update-change-detection.html)
 3. [AWS Elastic Beanstalk: deployment policies and settings](https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/using-features.rolling-version-deploy.html)
 4. [AWS Elastic Beanstalk: service overview and pricing model](https://aws.amazon.com/elasticbeanstalk/)
-
-> Lab-specific statements are based on the lab report and confirmations of successful manual deployment, green pipeline stages, and strategy observations. They are not a live audit of the AWS account.
