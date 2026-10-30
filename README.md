@@ -246,6 +246,9 @@ flowchart LR
 
 ## 8. Errors & Fixes
 
+Severe environment health
+Observation: Load-balancer health checks failing or unavailable; instances not reporting health data.
+Resolution / status: An instance had no public IPv4 address. Troubleshooting covered public-IP configuration, Internet Gateway routing, subnet associations, and target health. krakow-lab later became healthy with version 1.
 
 
 ---
